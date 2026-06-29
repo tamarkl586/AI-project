@@ -36,8 +36,8 @@ namespace project1.Controllers
                 if (cachedData != null)
                 {
                     _logger.LogInformation("Cache hit for all gifts.");
-                    var gifts = JsonSerializer.Deserialize<List<GiftDTO>>(cachedData);
-                    return Ok(gifts);
+                    var allGifts = JsonSerializer.Deserialize<List<GiftDTO>>(cachedData);
+                    return Ok(allGifts);
                 }
                 _logger.LogInformation("Cache miss for all gifts. Fetching from service.");
                 var gifts = await _service.GetAllAsync();
