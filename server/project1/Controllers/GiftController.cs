@@ -2,8 +2,8 @@
 using Microsoft.AspNetCore.Mvc;
 using project1.BLL.Interfaces;
 using project1.DTOs.Gift;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.Logging;
 using System.Text.Json;
 
 namespace project1.Controllers
@@ -12,6 +12,24 @@ namespace project1.Controllers
     [Route("api/[controller]")]
     public class GiftController : ControllerBase
     {
+        private const string AllGiftsCacheKey = "all_gifts_cache";
+        private const string GiftByIdCacheKeyPrefix = "gift_by_id_";
+
+        private static readonly DistributedCacheEntryOptions AllGiftsCacheOptions = new()
+        {
+            AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5)
+        };
+
+        private static readonly DistributedCacheEntryOptions GiftByIdCacheOptions = new()
+        {
+            AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(10)
+        };
+
+        private static readonly JsonSerializerOptions CacheSerializerOptions = new()
+        {
+            PropertyNameCaseInsensitive = true
+        };
+
         private readonly IGiftService _service;
         private readonly ILogger<GiftController> _logger;
         private readonly IDistributedCache _cache;
@@ -31,23 +49,18 @@ namespace project1.Controllers
             _logger.LogInformation("Request received to fetch all gifts.");
             try
             {
-                const string cacheKey = "all_gifts_cache";
-                var cachedData = await _cache.GetStringAsync(cacheKey);
-                if (cachedData != null)
+                var cachedGifts = await TryGetFromCacheAsync<List<GiftDTO>>(AllGiftsCacheKey, "all gifts");
+                if (cachedGifts != null)
                 {
-                    _logger.LogInformation("Cache hit for all gifts.");
-                    var allGifts = JsonSerializer.Deserialize<List<GiftDTO>>(cachedData);
-                    return Ok(allGifts);
+                    _logger.LogInformation("Cache hit for all gifts. Returning {Count} items.", cachedGifts.Count);
+                    return Ok(cachedGifts);
                 }
-                _logger.LogInformation("Cache miss for all gifts. Fetching from service.");
+
+                _logger.LogInformation("Cache miss for all gifts. Loading from database.");
+
                 var gifts = await _service.GetAllAsync();
-                var serializedData = JsonSerializer.Serialize(gifts);
-                var options = new DistributedCacheEntryOptions
-                {
-                    AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(300)
-                };
-                await _cache.SetStringAsync(cacheKey, serializedData, options);
-                _logger.LogInformation("Successfully retrieved {Count} gifts and cached.", gifts.Count);
+                await SetCacheValueAsync(AllGiftsCacheKey, gifts, AllGiftsCacheOptions);
+                _logger.LogInformation("Successfully retrieved {Count} gifts.", gifts.Count);
                 return Ok(gifts);
             }
             catch (Exception ex)
@@ -63,7 +76,17 @@ namespace project1.Controllers
             _logger.LogInformation("Request received to fetch gift with ID: {GiftId}", id);
             try
             {
+                var cacheKey = GetGiftByIdCacheKey(id);
+                var cachedGift = await TryGetFromCacheAsync<GiftDTO>(cacheKey, $"gift {id}");
+                if (cachedGift != null)
+                {
+                    _logger.LogInformation("Cache hit for gift {GiftId}.", id);
+                    return Ok(cachedGift);
+                }
+
+                _logger.LogInformation("Cache miss for gift {GiftId}. Loading from database.", id);
                 var gift = await _service.GetByIdAsync(id);
+                await SetCacheValueAsync(cacheKey, gift, GiftByIdCacheOptions);
                 return Ok(gift);
             }
             catch (KeyNotFoundException ex)
@@ -92,6 +115,7 @@ namespace project1.Controllers
             try
             {
                 await _service.AddAsync(dto);
+                await InvalidateGiftCachesAsync();
                 _logger.LogInformation("Gift '{Name}' added successfully.", dto.Name);
                 return Created("", new { message = "המתנה נוספה בהצלחה" });
             }
@@ -119,6 +143,7 @@ namespace project1.Controllers
             try
             {
                 await _service.UpdateAsync(id, dto);
+                await InvalidateGiftCachesAsync(id);
                 _logger.LogInformation("Gift ID {GiftId} updated successfully.", id);
                 return Ok(new { message = "המתנה עודכנה בהצלחה" });
             }
@@ -147,6 +172,7 @@ namespace project1.Controllers
             try
             {
                 await _service.DeleteAsync(id);
+                await InvalidateGiftCachesAsync(id);
                 _logger.LogInformation("Gift ID {GiftId} deleted successfully.", id);
                 return Ok(new { message = "המתנה נמחקה בהצלחה" });
             }
@@ -205,6 +231,7 @@ namespace project1.Controllers
             try
             {
                 var (winner, emailSent) = await _service.DrawWinnerAsync(id);
+                await InvalidateGiftCachesAsync(id);
                 _logger.LogInformation("Winner drawn successfully for gift ID {GiftId}. Winner: {WinnerEmail}, EmailSent: {EmailSent}", id, winner.Email, emailSent);
                 return Ok(new { name = winner.Name, email = winner.Email, emailSent });
             }
@@ -222,6 +249,70 @@ namespace project1.Controllers
             {
                 _logger.LogError(ex, "Error executing draw for gift ID: {GiftId}", id);
                 return StatusCode(StatusCodes.Status500InternalServerError, new { message = ex.Message });
+            }
+        }
+
+        private async Task<T?> TryGetFromCacheAsync<T>(string cacheKey, string entityName)
+        {
+            try
+            {
+                var cachedData = await _cache.GetStringAsync(cacheKey);
+                if (string.IsNullOrWhiteSpace(cachedData))
+                    return default;
+
+                var deserialized = JsonSerializer.Deserialize<T>(cachedData, CacheSerializerOptions);
+                if (deserialized != null)
+                    return deserialized;
+
+                _logger.LogWarning("Cache key '{CacheKey}' for {Entity} contained null payload. Removing invalid entry.", cacheKey, entityName);
+                await _cache.RemoveAsync(cacheKey);
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex, "Cache key '{CacheKey}' for {Entity} had invalid JSON. Removing invalid entry.", cacheKey, entityName);
+                await _cache.RemoveAsync(cacheKey);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Cache read failed for key '{CacheKey}' ({Entity}). Proceeding to database.", cacheKey, entityName);
+            }
+
+            return default;
+        }
+
+        private async Task SetCacheValueAsync<T>(string cacheKey, T value, DistributedCacheEntryOptions options)
+        {
+            try
+            {
+                var serializedData = JsonSerializer.Serialize(value, CacheSerializerOptions);
+                await _cache.SetStringAsync(cacheKey, serializedData, options);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Cache write failed for key '{CacheKey}'. Request will still succeed with DB data.", cacheKey);
+            }
+        }
+
+        private static string GetGiftByIdCacheKey(int id) => $"{GiftByIdCacheKeyPrefix}{id}";
+
+        private async Task InvalidateGiftCachesAsync(int? id = null)
+        {
+            try
+            {
+                await _cache.RemoveAsync(AllGiftsCacheKey);
+                _logger.LogInformation("Invalidated gifts cache key '{CacheKey}'.", AllGiftsCacheKey);
+
+                if (id.HasValue)
+                {
+                    var giftByIdCacheKey = GetGiftByIdCacheKey(id.Value);
+                    await _cache.RemoveAsync(giftByIdCacheKey);
+                    _logger.LogInformation("Invalidated gift-by-id cache key '{CacheKey}'.", giftByIdCacheKey);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to invalidate gifts cache key '{CacheKey}'.", AllGiftsCacheKey);
+                throw new ApplicationException("Cache invalidation failed for gifts list.", ex);
             }
         }
     }

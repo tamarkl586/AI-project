@@ -137,9 +137,19 @@ Log.Logger = new LoggerConfiguration()
 
 builder.Host.UseSerilog();
 
+var redisConnectionString = builder.Configuration["Redis_ConnectionString"]
+                            ?? builder.Configuration.GetConnectionString("Redis")
+                            ?? builder.Configuration["Redis:ConnectionString"];
+
+if (string.IsNullOrWhiteSpace(redisConnectionString))
+{
+    Log.Warning("Redis connection string is not configured. Set Redis_ConnectionString or ConnectionStrings:Redis.");
+}
+
 builder.Services.AddStackExchangeRedisCache(options =>
 {
-    options.Configuration = builder.Configuration["Redis_ConnectionString"];
+    options.Configuration = redisConnectionString;
+    options.InstanceName = "project1:";
 });
 
 // ==========================================

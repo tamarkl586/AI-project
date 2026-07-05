@@ -123,7 +123,7 @@ namespace project1.BLL.Implementations
                 .Include(g => g.Winner);
 
             if (!string.IsNullOrWhiteSpace(categoryName))
-                query = query.Where(g => g.Category.Name!.Contains(categoryName));
+                query = query.Where(g => g.Category != null && g.Category.Name.Contains(categoryName));
 
             if (maxPrice.HasValue)
                 query = query.Where(g => g.Price <= maxPrice.Value);

@@ -1,100 +1,180 @@
 services:
-  db:
-    image: mcr.microsoft.com/azure-sql-edge:latest
+  mongodb:
+    image: mongo:7
+    container_name: catalog-mongodb
+    restart: unless-stopped
     environment:
-      MSSQL_SA_PASSWORD: "YourStrongPassword123"
-      ACCEPT_EULA: "Y"
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-root}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-rootpassword}
+      MONGO_INITDB_DATABASE: ${CATALOG_DB_NAME:-catalogDb}
     ports:
-      - "1433:1433"
+      - "${MONGO_PORT:-27017}:27017"
     volumes:
-      - sqldata:/var/opt/mssql
+      - mongodb_data:/data/db
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mongosh --quiet --eval \"db.adminCommand({ ping: 1 }).ok\" mongodb://$$MONGO_INITDB_ROOT_USERNAME:$$MONGO_INITDB_ROOT_PASSWORD@localhost:27017/admin | grep 1"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
     networks:
-      - app-network
+      - microservices-net
 
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    networks:
-      - app-network
-
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    ports:
-      - "8080:8080"
+  postgres:
+    image: postgres:16-alpine
+    container_name: identity-postgres
+    restart: unless-stopped
     environment:
-      ASPNETCORE_ENVIRONMENT: "Docker"
-      ASPNETCORE_URLS: "http://+:8080"
-      ASPNETCORE_HTTP_PORTS: "8080"
-      ConnectionStrings__DefaultConnection: "Server=db,1433;Database=webApiProject;User Id=sa;Password=YourStrongPassword123;TrustServerCertificate=True;"
-      Redis_ConnectionString: "redis:6379"
-    depends_on:
-      - db
-      - redis
+      POSTGRES_DB: ${IDENTITY_DB_NAME:-identity_db}
+      POSTGRES_USER: ${IDENTITY_DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${IDENTITY_DB_PASSWORD:-postgres}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
     networks:
-      - app-network
+      - microservices-net
 
-volumes:
-  sqldata:
+  sqlserver:
+    image: mcr.microsoft.com/azure-sql-edge:latest
+    container_name: ticketing-sqlserver
+    restart: unless-stopped
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "SecretPass123!#"
+      MSSQL_PID: "Developer"
+    ports:
+      - "${SQLSERVER_PORT:-1433}:1433"
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "if [ -x /opt/mssql-tools18/bin/sqlcmd ]; then /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q \"SELECT 1\"; elif command -v sqlcmd >/dev/null 2>&1; then sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q \"SELECT 1\"; else bash -c 'echo > /dev/tcp/localhost/1433'; fi"
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 90s
+    networks:
+      - microservices-net
+
+  cassandra:
+    image: cassandra:4.1
+    container_name: drawreport-cassandra
+    restart: unless-stopped
+    environment:
+      CASSANDRA_CLUSTER_NAME: ${CASSANDRA_CLUSTER_NAME:-drawreport-cluster}
+      CASSANDRA_DC: ${CASSANDRA_DC:-datacenter1}
+      MAX_HEAP_SIZE: 512M
+      HEAP_NEWSIZE: 128M
+    ports:
+      - "${CASSANDRA_PORT:-9042}:9042"
+    volumes:
+      - cassandra_data:/var/lib/cassandra
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh localhost 9042 -e \"DESCRIBE KEYSPACES\""]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+    networks:
+      - microservices-net
+
+  catalogservice:
+    build:
+      context: ./server/CatalogService
+      dockerfile: Dockerfile
+    container_name: catalog-service
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      MongoDB_ConnectionString: mongodb://${MONGO_ROOT_USER:-root}:${MONGO_ROOT_PASSWORD:-rootpassword}@mongodb:27017/${CATALOG_DB_NAME:-catalogDb}?authSource=admin
+      MongoDB_DatabaseName: ${CATALOG_DB_NAME:-catalogDb}
+      Redis_ConnectionString: ${CATALOG_REDIS_CONNECTION:-}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    ports:
+      - "${CATALOG_PORT:-8081}:8080"
+    networks:
+      - microservices-net
+
+  identityservice:
+    build:
+      context: ./server/IdentityService
+      dockerfile: Dockerfile
+    container_name: identity-service
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__DefaultConnection: Host=postgres;Port=5432;Database=${IDENTITY_DB_NAME:-identity_db};Username=${IDENTITY_DB_USER:-postgres};Password=${IDENTITY_DB_PASSWORD:-postgres}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${IDENTITY_PORT:-8082}:8080"
+    networks:
+      - microservices-net
+
+  ticketingservice:
+    build:
+      context: ./server/TicketingService
+      dockerfile: Dockerfile
+    container_name: ticketing-service
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__DefaultConnection: "Server=sqlserver,1433;Database=${TICKETING_DB_NAME:-ticketing_db};User Id=sa;Password=SecretPass123!#;TrustServerCertificate=True;"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    ports:
+      - "${TICKETING_PORT:-8083}:8080"
+    networks:
+      - microservices-net
+
+  drawreportservice:
+    build:
+      context: ./server/DrawReportService
+      dockerfile: Dockerfile
+    container_name: drawreport-service
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      Cassandra__ContactPoints__0: cassandra
+      Cassandra__Port: "9042"
+      Cassandra__Keyspace: ${CASSANDRA_KEYSPACE:-insights_db}
+      Cassandra__Datacenter: ${CASSANDRA_DC:-datacenter1}
+    depends_on:
+      cassandra:
+        condition: service_healthy
+    ports:
+      - "${DRAWREPORT_PORT:-8084}:8080"
+    networks:
+      - microservices-net
 
 networks:
-  app-network:
+  microservices-net:
     driver: bridge
 
-
-
-
-
-
-
-# version: "3.9"
-
-# services:
-#   db:
-#     image: mcr.microsoft.com/azure-sql-edge:latest
-#     environment:
-#       MSSQL_SA_PASSWORD: "YourStrongPassword123"
-#       ACCEPT_EULA: "Y"
-#       MSSQL_PID: "Express"
-#     ports:
-#       - "1433:1433"
-#     volumes:
-#       - sqldata:/var/opt/mssql
-#     networks:
-#       - app-network
-#     healthcheck:
-#       test:
-#         [
-#           "CMD-SHELL",
-#           "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P YourStrongPassword123 -Q 'SELECT 1' -No || exit 1",
-#         ]
-#       interval: 10s
-#       timeout: 5s
-#       retries: 12
-#       start_period: 30s
-
-#   app:
-#     build:
-#       context: .
-#       dockerfile: Dockerfile
-#     ports:
-#       - "8080:8080"
-#     environment:
-#       ASPNETCORE_ENVIRONMENT: "Docker"
-#       ASPNETCORE_URLS: "http://+:8080"
-#       ASPNETCORE_HTTP_PORTS: "8080"
-#       ConnectionStrings__DefaultConnection: "Server=db,1433;Database=webApiProject;User Id=sa;Password=YourStrongPassword123;TrustServerCertificate=True;"
-#     depends_on:
-#       db:
-#         condition: service_healthy
-#     networks:
-#       - app-network
-
-# volumes:
-#   sqldata:
-
-# networks:
-#   app-network:
-#     driver: bridge
+volumes:
+  mongodb_data:
+  postgres_data:
+  sqlserver_data:
+  cassandra_data:

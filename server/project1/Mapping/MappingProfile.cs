@@ -26,7 +26,7 @@ namespace project1.Mapping
             // ===== Gifts =====
             CreateMap<Gift, GiftDTO>()
                 .ForMember(dest => dest.DonorName, opt => opt.MapFrom(src => src.Donor.Name))
-                .ForMember(dest => dest.CategoryName, opt => opt.MapFrom(src => src.Category.Name))
+                .ForMember(dest => dest.CategoryName, opt => opt.MapFrom(src => src.Category != null ? src.Category.Name : "N/A"))
                 .ForMember(dest => dest.WinnerName, opt => opt.MapFrom(src => src.Winner != null ? src.Winner.Name : "N/A"))
                 .ForMember(dest => dest.WinnerEmail, opt => opt.MapFrom(src => src.Winner != null ? src.Winner.Email : null));
 

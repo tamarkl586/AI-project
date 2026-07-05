@@ -73,6 +73,11 @@ export class GiftList implements OnInit {
       this.allGifts = gifts;
       this.giftNames = [...new Set(gifts.map(g => g.name))].sort();
       this.donorNames = [...new Set(gifts.map(g => g.donorName).filter(d => !!d))].sort();
+
+      // Keep manager filtered list fresh when underlying gifts data changes.
+      if (this.filteredGifts && (this.mgrFilterName || this.mgrFilterCategory || this.mgrFilterDonor)) {
+        this.applyManagerFilters();
+      }
     });
   }
 

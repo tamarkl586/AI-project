@@ -1,0 +1,6 @@
+@IdentityService_HostAddress = http://localhost:5040
+
+GET {{IdentityService_HostAddress}}/api/auth/check-email?email=test@example.com
+Accept: application/json
+
+###

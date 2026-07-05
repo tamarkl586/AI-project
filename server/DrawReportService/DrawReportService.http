@@ -1,0 +1,6 @@
+@DrawReportService_HostAddress = http://localhost:5241
+
+GET {{DrawReportService_HostAddress}}/health
+Accept: application/json
+
+###
