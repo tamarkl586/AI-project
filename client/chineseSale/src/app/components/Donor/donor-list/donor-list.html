@@ -137,7 +137,7 @@
       <div class="donor-card" [class.expanded]="expandedDonor?.id === d.id" [style.animation-delay]="i * 50 + 'ms'">
         <div class="donor-card-header" (click)="toggleDetails(d)">
           <div class="donor-avatar">
-            <span>{{ d.name?.charAt(0) }}</span>
+            <span>{{ d.name.charAt(0) }}</span>
           </div>
           <div class="donor-card-body">
             <h3 class="donor-name">{{ d.name }}</h3>

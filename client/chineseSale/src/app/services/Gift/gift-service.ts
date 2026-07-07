@@ -10,7 +10,7 @@ import { environment } from '../../../environments/environment';
   providedIn: 'root',
 })
 export class GiftService {
-  private baseUrl = `${environment.apiUrl}/Gift`;
+  private baseUrl = `${environment.apiUrl}/gift`;
 
   // ניהול המצב של המתנות בזרם (Stream)
   private giftsSubject = new BehaviorSubject<GiftModel[]>([]);
@@ -82,6 +82,6 @@ export class GiftService {
   }
 
   drawWinner(id: number): Observable<any> {
-    return this.http.post(`${this.baseUrl}/${id}/draw`, {});
+    return this.http.post(`${environment.apiUrl}/reports/draw/${id}`, {});
   }
 }

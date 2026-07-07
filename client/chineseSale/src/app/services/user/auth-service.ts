@@ -14,7 +14,7 @@ interface LoginResponse {
   providedIn: 'root',
 })
 export class AuthService {
-  private baseUrl = `${environment.apiUrl}/Auth`;
+  private baseUrl = `${environment.apiUrl}/auth`;
 
   private _isLoggedIn = signal(this.hasToken());
   isLoggedIn = this._isLoggedIn.asReadonly();
@@ -112,104 +112,3 @@ export class AuthService {
 }
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// import { Injectable, signal, computed } from '@angular/core';
-// import { environment } from '../../../environments/environment.development';
-// import { Observable, tap } from 'rxjs';
-// import { LoginModel } from '../../models/user/LoginModel';
-// import { RegisterModel } from '../../models/user/RegisterModel';
-// import { HttpClient } from '@angular/common/http';
-
-// interface LoginResponse {
-//   token: string;
-//   message: string;
-// }
-
-// @Injectable({
-//   providedIn: 'root',
-// })
-// export class AuthService {
-//   private baseUrl = `${environment.apiUrl}/Auth`;
-
-//   private _isLoggedIn = signal(this.hasToken());
-//   isLoggedIn = this._isLoggedIn.asReadonly();
-
-//   currentRole = computed(() => this._isLoggedIn() ? this.getRole() : null);
-//   currentUserName = computed(() => this._isLoggedIn() ? this.getUserName() : null);
-//   isManager = computed(() => this.currentRole() === 'manager');
-
-//   constructor(private http: HttpClient) {}
-
-//   login(dto: LoginModel): Observable<LoginResponse> {
-//     return this.http.post<LoginResponse>(`${this.baseUrl}/login`, dto).pipe(
-//       tap(res => {
-//         localStorage.setItem('token', res.token);
-//         this._isLoggedIn.set(true);
-//       })
-//     );
-//   }
-
-//   register(dto: RegisterModel): Observable<any> {
-//     return this.http.post(`${this.baseUrl}/register`, dto);
-//   }
-
-//   logout(): void {
-//     localStorage.removeItem('token');
-//     this._isLoggedIn.set(false);
-//   }
-
-//   getToken(): string | null {
-//     return localStorage.getItem('token');
-//   }
-
-//   private hasToken(): boolean {
-//     return !!localStorage.getItem('token');
-//   }
-
-//   getRole(): string | null {
-//     const payload = this.decodeToken();
-//     return payload?.['http://schemas.microsoft.com/ws/2008/06/identity/claims/role'] ?? null;
-//   }
-
-//   getUserName(): string | null {
-//     const payload = this.decodeToken();
-//     return payload?.['http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name'] ?? null;
-//   }
-
-//   getUserId(): number | null {
-//     const payload = this.decodeToken();
-//     const id = payload?.['http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier'];
-//     return id ? +id : null;
-//   }
-
-//   private decodeToken(): any {
-//     const token = this.getToken();
-//     if (!token) return null;
-//     try {
-//       const payload = token.split('.')[1];
-//       return JSON.parse(atob(payload));
-//     } catch {
-//       return null;
-//     }
-//   }
-// }

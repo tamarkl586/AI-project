@@ -1,3 +1,5 @@
+@use 'sass:color';
+
 // ===== Site Color Palette (matching all components) =====
 $brown: #8b4513;
 $brown-dark: #6b2f0a;
@@ -433,7 +435,7 @@ $shadow-card: 0 12px 48px rgba(139, 69, 19, 0.10), 0 2px 8px rgba(139, 69, 19, 0
 
   &.alert-success {
     background: rgba($green, 0.05);
-    color: darken($green, 15%);
+    color: color.adjust($green, $lightness: -15%);
     border: 1px solid rgba($green, 0.15);
     border-right: 4px solid $green;
 

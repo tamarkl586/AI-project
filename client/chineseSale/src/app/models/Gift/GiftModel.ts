@@ -6,6 +6,7 @@ export class GiftModel {
     price!: number;
     donorName!: string;
     categoryName!: string;
+    winnerId?: number | null;
     winnerName?: string;
     winnerEmail?: string;
 }

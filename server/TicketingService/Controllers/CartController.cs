@@ -39,12 +39,50 @@ namespace TicketingService.Controllers
             return int.Parse(idClaim.Value);
         }
 
+        private string GetUserName()
+        {
+            var nameClaim = User.FindFirst(ClaimTypes.Name)?.Value;
+            return string.IsNullOrWhiteSpace(nameClaim) ? "Unknown User" : nameClaim;
+        }
+
+        private string GetUserEmail()
+        {
+            var emailClaim = User.FindFirst(ClaimTypes.Email)?.Value;
+            return string.IsNullOrWhiteSpace(emailClaim) ? "unknown@example.com" : emailClaim;
+        }
+
+        private bool TryValidateForwardedIdentity(int tokenUserId, out IActionResult? failureResult)
+        {
+            var headerUserId = Request.Headers["X-User-Id"].ToString();
+            if (string.IsNullOrWhiteSpace(headerUserId))
+            {
+                _logger.LogWarning("Missing X-User-Id header on protected request.");
+                failureResult = StatusCode(StatusCodes.Status403Forbidden, new { message = "Missing gateway identity header." });
+                return false;
+            }
+
+            if (!int.TryParse(headerUserId, out var forwardedUserId) || forwardedUserId != tokenUserId)
+            {
+                _logger.LogWarning(
+                    "Identity mismatch detected. Token user {TokenUserId}, header user {HeaderUserId}",
+                    tokenUserId,
+                    headerUserId);
+                failureResult = StatusCode(StatusCodes.Status403Forbidden, new { message = "Identity mismatch." });
+                return false;
+            }
+
+            failureResult = null;
+            return true;
+        }
+
         [HttpGet]
         public async Task<IActionResult> GetMyCart()
         {
             try
             {
                 int userId = GetUserId();
+                if (!TryValidateForwardedIdentity(userId, out var failureResult))
+                    return failureResult!;
                 _logger.LogInformation("User {UserId} requested their cart.", userId);
                 var cart = await _service.GetMyCartAsync(userId);
                 return Ok(cart);
@@ -68,6 +106,8 @@ namespace TicketingService.Controllers
             try
             {
                 int userId = GetUserId();
+                if (!TryValidateForwardedIdentity(userId, out var failureResult))
+                    return failureResult!;
                 _logger.LogInformation("User {UserId} is adding Gift {GiftId} to cart.", userId, dto.GiftId);
                 await _service.AddAsync(userId, dto);
                 return Ok(new { message = "Item added to cart successfully." });
@@ -86,6 +126,8 @@ namespace TicketingService.Controllers
             try
             {
                 int userId = GetUserId();
+                if (!TryValidateForwardedIdentity(userId, out var failureResult))
+                    return failureResult!;
                 await _service.UpdateQuantityAsync(id, userId, quantity);
                 return Ok(new { message = "Cart quantity updated successfully." });
             }
@@ -102,6 +144,8 @@ namespace TicketingService.Controllers
             try
             {
                 int userId = GetUserId();
+                if (!TryValidateForwardedIdentity(userId, out var failureResult))
+                    return failureResult!;
                 _logger.LogInformation("User {UserId} removing item {Id} from cart.", userId, id);
                 await _service.RemoveAsync(id, userId);
                 return Ok(new { message = "Item removed from cart successfully." });
@@ -117,12 +161,20 @@ namespace TicketingService.Controllers
         public async Task<IActionResult> Purchase()
         {
             int userId = GetUserId();
-            _logger.LogInformation("User {UserId} is processing purchase.", userId);
+            var userName = GetUserName();
+            var userEmail = GetUserEmail();
+            if (!TryValidateForwardedIdentity(userId, out var failureResult))
+                return failureResult!;
+            _logger.LogInformation("User {UserId} initiated purchase saga.", userId);
             try
             {
-                await _service.PurchaseAsync(userId);
-                _logger.LogInformation("User {UserId} successfully completed purchase.", userId);
-                return Ok(new { message = "Purchase completed successfully." });
+                var initiatedItems = await _service.PurchaseAsync(userId, userName, userEmail);
+                _logger.LogInformation("User {UserId} initiated saga for {Count} cart item(s).", userId, initiatedItems);
+                return Accepted(new
+                {
+                    message = "Ticket purchase request initiated. Verification is in progress.",
+                    initiatedItems
+                });
             }
             catch (Exception ex)
             {
@@ -137,6 +189,8 @@ namespace TicketingService.Controllers
             try
             {
                 int userId = GetUserId();
+                if (!TryValidateForwardedIdentity(userId, out var failureResult))
+                    return failureResult!;
                 _logger.LogInformation("User {UserId} is clearing cart.", userId);
                 await _service.ClearCartAsync(userId);
                 return Ok(new { message = "Cart cleared successfully." });

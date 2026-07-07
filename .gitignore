@@ -44,3 +44,8 @@ desktop.ini
 
 # ----- IDE -----
 .vscode/
+
+# ----- Local environment -----
+.env
+.env.*
+!.env.example

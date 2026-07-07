@@ -23,6 +23,10 @@ export class GiftDetails implements OnInit {
   quantity = 1;
   message = '';
 
+  get isDrawn(): boolean {
+    return !!this.gift?.winnerId;
+  }
+
   ngOnInit(): void {
     const id = Number(this.route.snapshot.paramMap.get('id'));
     if (id) {

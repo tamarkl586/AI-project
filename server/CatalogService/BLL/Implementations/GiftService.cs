@@ -116,5 +116,11 @@ namespace CatalogService.BLL.Implementations
             var gifts = await _giftDal.UserSearchAsync(categoryName, maxPrice);
             return _mapper.Map<List<GiftDTO>>(gifts);
         }
+
+        public async Task SetWinnerAsync(int giftId, int winnerId)
+        {
+            _logger.LogInformation("Setting winner userId={WinnerId} for Gift ID {GiftId}", winnerId, giftId);
+            await _giftDal.SetWinnerAsync(giftId, winnerId);
+        }
     }
 }

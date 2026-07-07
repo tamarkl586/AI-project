@@ -1,7 +1,7 @@
 import { Component } from '@angular/core';
 import { DatePipe } from '@angular/common';
-import { CartService } from '../../../services/Cart/cart-service';
 import { PurchaserDetailsModel } from '../../../models/Cart/PurchaserDetailsModel';
+import { ReportService } from '../../../services/Report/report-service';
 
 @Component({
   selector: 'app-cart-report',
@@ -12,10 +12,10 @@ import { PurchaserDetailsModel } from '../../../models/Cart/PurchaserDetailsMode
 export class CartReport {
     reports: PurchaserDetailsModel[] = [];
 
-  constructor(private cartService: CartService) { }
+  constructor(private reportService: ReportService) { }
 
   ngOnInit(): void {
-    this.cartService.getAllPurchasers().subscribe({
+    this.reportService.getAllPurchasers().subscribe({
       next: (res: PurchaserDetailsModel[]) => this.reports = res,
       error: (err: any) => console.error('שגיאה בטעינת הדוח', err)
     });

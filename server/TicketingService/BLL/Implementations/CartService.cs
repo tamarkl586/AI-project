@@ -1,5 +1,8 @@
 using AutoMapper;
+using MassTransit;
 using TicketingService.BLL.Interfaces;
+using TicketingService.Clients.Catalog;
+using TicketingService.Contracts;
 using TicketingService.DAL.Interfaces;
 using TicketingService.DTOs.Cart;
 using TicketingService.Models;
@@ -9,12 +12,24 @@ namespace TicketingService.BLL.Implementations
     public class CartService : ICartService
     {
         private readonly ICartDAL _cartDal;
+        private readonly ICatalogServiceClient _catalogServiceClient;
+        private readonly IPurchaseRequestDAL _purchaseRequestDal;
+        private readonly IPublishEndpoint _publishEndpoint;
         private readonly IMapper _mapper;
         private readonly ILogger<CartService> _logger;
 
-        public CartService(ICartDAL cartDal, IMapper mapper, ILogger<CartService> logger)
+        public CartService(
+            ICartDAL cartDal,
+            ICatalogServiceClient catalogServiceClient,
+            IPurchaseRequestDAL purchaseRequestDal,
+            IPublishEndpoint publishEndpoint,
+            IMapper mapper,
+            ILogger<CartService> logger)
         {
             _cartDal = cartDal;
+            _catalogServiceClient = catalogServiceClient;
+            _purchaseRequestDal = purchaseRequestDal;
+            _publishEndpoint = publishEndpoint;
             _mapper = mapper;
             _logger = logger;
         }
@@ -34,13 +49,23 @@ namespace TicketingService.BLL.Implementations
             }
 
             _logger.LogInformation("Checking gift {GiftId} before add-to-cart for user {UserId}", dto.GiftId, userId);
-            var gift = await _cartDal.GetGiftByIdAsync(dto.GiftId.Value)
+            var gift = await _catalogServiceClient.GetGiftByIdAsync(dto.GiftId.Value)
                 ?? throw new KeyNotFoundException($"Gift ID {dto.GiftId} not found.");
 
             if (gift.WinnerId != null)
             {
                 throw new InvalidOperationException("A draw has already been performed for this gift.");
             }
+
+            await _cartDal.UpsertGiftAsync(new Gift
+            {
+                Id = gift.Id,
+                Name = gift.Name,
+                Description = gift.Description,
+                Picture = gift.Picture,
+                Price = gift.Price,
+                WinnerId = gift.WinnerId
+            });
 
             var existingItem = await _cartDal.GetOpenCartItemAsync(userId, dto.GiftId.Value);
             if (existingItem != null)
@@ -93,9 +118,9 @@ namespace TicketingService.BLL.Implementations
             await _cartDal.DeleteAsync(item);
         }
 
-        public async Task PurchaseAsync(int userId)
+        public async Task<int> PurchaseAsync(int userId, string userName, string userEmail)
         {
-            _logger.LogInformation("Starting checkout transaction for user {UserId}", userId);
+            _logger.LogInformation("Starting asynchronous checkout flow for user {UserId}", userId);
 
             var items = await _cartDal.GetUserCartAsync(userId);
             if (!items.Any())
@@ -103,22 +128,50 @@ namespace TicketingService.BLL.Implementations
                 throw new InvalidOperationException("Cart is empty.");
             }
 
-            var drawnItems = items.Where(i => i.Gift.WinnerId != null).ToList();
-            if (drawnItems.Any())
+            var correlationId = Guid.NewGuid();
+            var purchaseRequests = items.Select(item => new TicketPurchaseRequest
             {
-                foreach (var drawnItem in drawnItems)
+                Id = Guid.NewGuid(),
+                CorrelationId = correlationId,
+                CartId = item.Id,
+                UserId = userId,
+                GiftId = item.GiftID,
+                Quantity = item.Quantity,
+                UnitPrice = item.Gift.Price,
+                Status = "Pending",
+                CreatedAtUtc = DateTime.UtcNow
+            }).ToList();
+
+            await _purchaseRequestDal.AddRangeAsync(purchaseRequests);
+
+            foreach (var request in purchaseRequests)
+            {
+                var cartItem = items.First(i => i.Id == request.CartId);
+
+                await _publishEndpoint.Publish(new TicketPurchaseInitiatedEvent
                 {
-                    await _cartDal.DeleteAsync(drawnItem);
-                }
+                    PurchaseRequestId = request.Id,
+                    CorrelationId = request.CorrelationId,
+                    UserId = request.UserId,
+                    UserName = userName,
+                    UserEmail = userEmail,
+                    CartId = request.CartId,
+                    GiftId = request.GiftId,
+                    GiftName = cartItem.Gift.Name,
+                    GiftPicture = cartItem.Gift.Picture,
+                    Quantity = request.Quantity,
+                    UnitPrice = request.UnitPrice,
+                    InitiatedAtUtc = DateTime.UtcNow
+                });
             }
 
-            var hasPurchasableItems = items.Any(i => i.Gift.WinnerId == null);
-            if (!hasPurchasableItems)
-            {
-                throw new InvalidOperationException("All items in cart were already drawn and removed.");
-            }
+            _logger.LogInformation(
+                "Published {Count} TicketPurchaseInitiatedEvent messages for user {UserId}. Correlation {CorrelationId}",
+                purchaseRequests.Count,
+                userId,
+                correlationId);
 
-            await _cartDal.ExecutePurchaseAsync(userId);
+            return purchaseRequests.Count;
         }
 
         public async Task ClearCartAsync(int userId)

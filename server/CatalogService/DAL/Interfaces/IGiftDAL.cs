@@ -13,5 +13,6 @@ namespace CatalogService.DAL.Interfaces
         Task<List<Gift>> SearchAsync(string? giftName, string? donorName);
         Task<List<Gift>> UserSearchAsync(string? categoryName, int? maxPrice);
         Task<List<Gift>> GetByDonorIdAsync(int donorId);
+        Task SetWinnerAsync(int giftId, int winnerId);
     }
 }

@@ -4,7 +4,10 @@ using CatalogService.DAL;
 using CatalogService.DAL.Implementations;
 using CatalogService.DAL.Interfaces;
 using CatalogService.Mapping;
+using CatalogService.Middleware;
+using HealthChecks.UI.Client;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using Serilog;
@@ -162,6 +165,22 @@ else
 }
 
 // ==========================================
+// 11. Health Checks — deep MongoDB + Redis
+// ==========================================
+var mongoConnStr = builder.Configuration["MongoDB_ConnectionString"] ?? "mongodb://localhost:27017";
+var redisHcStr   = redisConnectionString ?? "localhost:6379";
+
+builder.Services.AddHealthChecks()
+    .AddMongoDb(
+        mongodbConnectionString: mongoConnStr,
+        name: "mongodb",
+        tags: new[] { "db", "ready" })
+    .AddRedis(
+        redisConnectionString: redisHcStr,
+        name: "redis",
+        tags: new[] { "cache", "ready" });
+
+// ==========================================
 // 11. Middleware pipeline
 // ==========================================
 var app = builder.Build();
@@ -172,13 +191,31 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+app.Use(async (context, next) =>
+{
+    var containerId = Environment.GetEnvironmentVariable("HOSTNAME") ?? Environment.MachineName;
+    context.Response.OnStarting(() =>
+    {
+        context.Response.Headers["X-Container-ID"] = containerId;
+        return Task.CompletedTask;
+    });
+
+    await next();
+});
+
 app.UseCors("DevelopmentCors");
+
+// Correlation ID enriches Serilog context before auth/auth middleware
+app.UseMiddleware<CorrelationIdMiddleware>();
+
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Health probe
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", service = "CatalogService" }))
-   .AllowAnonymous();
+// Deep health check endpoint
+app.MapHealthChecks("/health", new HealthCheckOptions
+{
+    ResponseWriter = UIResponseWriter.WriteHealthCheckUIResponse
+}).AllowAnonymous();
 
 app.MapControllers();
 

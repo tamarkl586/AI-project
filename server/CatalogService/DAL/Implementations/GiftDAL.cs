@@ -69,6 +69,14 @@ namespace CatalogService.DAL.Implementations
             return await _gifts.Find(combined).ToListAsync();
         }
 
+        public async Task SetWinnerAsync(int giftId, int winnerId)
+        {
+            var update = Builders<Gift>.Update.Set(g => g.WinnerId, winnerId);
+            var result = await _gifts.UpdateOneAsync(g => g.Id == giftId, update);
+            if (result.MatchedCount == 0)
+                throw new KeyNotFoundException($"Gift {giftId} not found");
+        }
+
         public async Task<List<Gift>> UserSearchAsync(string? categoryName, int? maxPrice)
         {
             var filters = new List<FilterDefinition<Gift>>();

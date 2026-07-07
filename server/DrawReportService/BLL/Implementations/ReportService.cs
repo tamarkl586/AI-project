@@ -118,10 +118,6 @@ public class ReportService : IReportService
             giftId);
 
         var summaryRow = (await _session.ExecuteAsync(summaryStatement)).FirstOrDefault();
-        if (summaryRow == null)
-        {
-            throw new KeyNotFoundException("Gift not found in the system.");
-        }
 
         var purchasesStatement = new SimpleStatement(
             $"SELECT user_name, user_email, quantity FROM {_options.Keyspace}.gift_purchases_by_gift WHERE gift_id = ?;",
@@ -136,13 +132,25 @@ public class ReportService : IReportService
             })
             .ToList();
 
+        if (summaryRow == null && purchasers.Count == 0)
+        {
+            throw new KeyNotFoundException("Gift not found in the system.");
+        }
+
+        var calculatedTickets = purchasers.Sum(p => p.Quantity);
+        var calculatedEarned = calculatedTickets * 0m;
+
         return new GiftPurchasesSummaryDTO
         {
             GiftId = giftId,
-            GiftName = GetString(summaryRow, "gift_name"),
+            GiftName = summaryRow == null ? $"Gift {giftId}" : GetString(summaryRow, "gift_name"),
             Purchasers = purchasers,
-            TotalTicketsPurchased = summaryRow.IsNull("total_tickets") ? 0 : summaryRow.GetValue<int>("total_tickets"),
-            TotalEarned = summaryRow.IsNull("total_earned") ? 0m : summaryRow.GetValue<decimal>("total_earned")
+            TotalTicketsPurchased = summaryRow == null
+                ? calculatedTickets
+                : (summaryRow.IsNull("total_tickets") ? 0 : summaryRow.GetValue<int>("total_tickets")),
+            TotalEarned = summaryRow == null
+                ? calculatedEarned
+                : (summaryRow.IsNull("total_earned") ? 0m : summaryRow.GetValue<decimal>("total_earned"))
         };
     }
 

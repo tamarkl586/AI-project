@@ -224,6 +224,36 @@ namespace CatalogService.Controllers
             }
         }
 
+        /// <summary>
+        /// Internal service-to-service endpoint. Called by DrawReportService after a draw to persist
+        /// the winner in Catalog MongoDB so all clients see the winner via GET /api/gift.
+        /// Not exposed as a user-facing mutation: CatalogService port is only reachable within the
+        /// Docker network; external traffic goes through the ApiGateway which enforces RequireAuth.
+        /// </summary>
+        [HttpPatch("{id}/winner")]
+        [AllowAnonymous]
+        public async Task<IActionResult> SetWinner(int id, [FromBody] SetWinnerRequest request)
+        {
+            if (request.WinnerId <= 0)
+                return BadRequest(new { message = "Invalid winner ID" });
+            try
+            {
+                await _service.SetWinnerAsync(id, request.WinnerId);
+                await InvalidateGiftCachesAsync(id);
+                _logger.LogInformation("Winner userId={WinnerId} set for Gift ID {GiftId}", request.WinnerId, id);
+                return Ok(new { message = "Winner set successfully" });
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return NotFound(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error setting winner for Gift ID {GiftId}", id);
+                return StatusCode(StatusCodes.Status500InternalServerError, new { message = ex.Message });
+            }
+        }
+
         // ── Cache helpers ─────────────────────────────────────────────────────────
 
         private async Task<T?> TryGetFromCacheAsync<T>(string cacheKey, string entityName)
@@ -286,4 +316,6 @@ namespace CatalogService.Controllers
             }
         }
     }
+
+    public record SetWinnerRequest(int WinnerId);
 }

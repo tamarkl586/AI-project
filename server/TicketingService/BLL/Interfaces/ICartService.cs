@@ -8,7 +8,7 @@ namespace TicketingService.BLL.Interfaces
         Task AddAsync(int userId, AddToCartDTO dto);
         Task UpdateQuantityAsync(int cartId, int userId, int newQuantity);
         Task RemoveAsync(int cartId, int userId);
-        Task PurchaseAsync(int userId);
+        Task<int> PurchaseAsync(int userId, string userName, string userEmail);
         Task ClearCartAsync(int userId);
     }
 }

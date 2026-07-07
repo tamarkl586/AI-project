@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Data.SqlClient;
 using TicketingService.DAL.Interfaces;
 using TicketingService.Models;
 
@@ -34,9 +35,51 @@ namespace TicketingService.DAL.Implementations
                 .FirstOrDefaultAsync(c => c.UserID == userId && c.GiftID == giftId && !c.IsPurchased);
         }
 
-        public async Task<Gift?> GetGiftByIdAsync(int giftId)
+        public async Task UpsertGiftAsync(Gift gift)
         {
-            return await _context.Gifts.FirstOrDefaultAsync(g => g.Id == giftId);
+            var existingGift = await _context.Gifts.FirstOrDefaultAsync(g => g.Id == gift.Id);
+            if (existingGift == null)
+            {
+                await InsertGiftSnapshotAsync(gift);
+            }
+            else
+            {
+                existingGift.Name = gift.Name;
+                existingGift.Description = gift.Description;
+                existingGift.Picture = gift.Picture;
+                existingGift.Price = gift.Price;
+                existingGift.WinnerId = gift.WinnerId;
+            }
+
+            await _context.SaveChangesAsync();
+        }
+
+        private async Task InsertGiftSnapshotAsync(Gift gift)
+        {
+            await _context.Gifts.AddAsync(gift);
+
+            try
+            {
+                await _context.SaveChangesAsync();
+            }
+            catch (DbUpdateException ex) when (IsExplicitIdentityInsertError(ex))
+            {
+                _context.Entry(gift).State = EntityState.Detached;
+
+                await using var transaction = await _context.Database.BeginTransactionAsync();
+                await _context.Database.ExecuteSqlRawAsync("SET IDENTITY_INSERT [Gifts] ON;");
+                await _context.Database.ExecuteSqlInterpolatedAsync($@"
+                    INSERT INTO [Gifts] ([Id], [Description], [Name], [Picture], [Price], [WinnerId])
+                    VALUES ({gift.Id}, {gift.Description}, {gift.Name}, {gift.Picture}, {gift.Price}, {gift.WinnerId})");
+                await _context.Database.ExecuteSqlRawAsync("SET IDENTITY_INSERT [Gifts] OFF;");
+                await transaction.CommitAsync();
+            }
+        }
+
+        private static bool IsExplicitIdentityInsertError(DbUpdateException ex)
+        {
+            return ex.InnerException is SqlException sqlException
+                && sqlException.Number == 544;
         }
 
         public async Task AddAsync(Cart cart)

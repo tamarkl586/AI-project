@@ -94,7 +94,7 @@
 @if (authService.isManager()) {
 <div class="mgr-cards-container">
   @for(g of (filteredGifts ?? (gifts$ | async)); track g.id) {
-    <div class="mgr-card-row" [class.won]="g.winnerName != 'N/A'">
+    <div class="mgr-card-row" [class.won]="isGiftDrawn(g)">
       <!-- Image section with winner overlay -->
       <a [routerLink]="['/gifts', g.id]" class="mgr-card-image-wrapper">
         @if (g.picture) {
@@ -103,7 +103,7 @@
           <div class="mgr-card-no-image"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="20 12 20 22 4 22 4 12"/><rect x="2" y="7" width="20" height="5"/><line x1="12" y1="22" x2="12" y2="7"/><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/></svg></div>
         }
         <!-- Winner overlay (similar to user view) -->
-        @if (g.winnerName != 'N/A') {
+        @if (isGiftDrawn(g)) {
           <div class="winner-overlay">
             <div class="winner-overlay-content">
 <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -114,9 +114,9 @@
               <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20 17 22"/>
               <path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/>
             </svg>              <span class="winner-label">זוכה</span>
-              <span class="winner-name">{{ g.winnerName }}</span>
-              @if (g.winnerEmail) {
-                <span class="winner-email">{{ g.winnerEmail }}</span>
+              <span class="winner-name">{{ drawnWinners[g.id]?.name || 'ההגרלה הושלמה' }}</span>
+              @if (drawnWinners[g.id]?.email) {
+                <span class="winner-email">{{ drawnWinners[g.id]?.email }}</span>
               }
             </div>
           </div>
@@ -148,7 +148,7 @@
 
       <!-- Actions -->
       <div class="mgr-card-actions">
-        @if (g.winnerName == 'N/A' && !drawnWinners[g.id]) {
+        @if (!isGiftDrawn(g)) {
           <div class="mgr-action-btns">
             <button class="btn-edit" (click)="openEdit(g.id)">
               <span class="btn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></span>
@@ -188,7 +188,7 @@
 @if (!authService.isManager()) {
 <div class="gifts-grid">
   @for(g of (filteredGifts ?? (gifts$ | async)); track g.id) {
-    <div class="gift-card" [class.won]="g.winnerName != 'N/A'">
+    <div class="gift-card" [class.won]="isGiftDrawn(g)">
       <!-- Card Image (clickable -> product page) -->
       <a [routerLink]="['/gifts', g.id]" class="card-image-wrapper">
         @if (g.picture) {
@@ -197,12 +197,12 @@
           <div class="card-no-image"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="20 12 20 22 4 22 4 12"/><rect x="2" y="7" width="20" height="5"/><line x1="12" y1="22" x2="12" y2="7"/><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/></svg></div>
         }
         <!-- Winner overlay -->
-        @if (g.winnerName != 'N/A') {
+        @if (isGiftDrawn(g)) {
           <div class="winner-overlay">
             <div class="winner-overlay-content">
               <span class="winner-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg></span>
               <span class="winner-label">זוכה</span>
-              <span class="winner-name">{{ g.winnerName }}</span>
+              <span class="winner-name">{{ drawnWinners[g.id]?.name || 'ההגרלה הושלמה' }}</span>
             </div>
           </div>
         }
@@ -217,7 +217,7 @@
 
       <!-- Quantity Controls: + [number] − (different background) -->
       <div class="card-controls">
-        @if (g.winnerName == 'N/A') {
+        @if (!isGiftDrawn(g)) {
           @if (authService.isLoggedIn()) {
             <div class="qty-row">
               <button class="qty-btn qty-plus" (click)="incrementQty(g)" [disabled]="loading[g.id]">+</button>

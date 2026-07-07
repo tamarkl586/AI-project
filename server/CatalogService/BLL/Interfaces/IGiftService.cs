@@ -14,5 +14,8 @@ namespace CatalogService.BLL.Interfaces
         Task<List<GiftDTO>> ManagerSearchAsync(string? giftName, string? donorName);
 
         Task<List<GiftDTO>> UserSearchAsync(string? categoryName, int? maxPrice);
+
+        /// <summary>Called by DrawReportService (service-to-service) to persist the winning user ID in Catalog MongoDB.</summary>
+        Task SetWinnerAsync(int giftId, int winnerId);
     }
 }

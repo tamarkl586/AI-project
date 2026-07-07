@@ -1,13 +1,31 @@
 using System.Text;
 using DrawReportService.BLL.Implementations;
 using DrawReportService.BLL.Interfaces;
+using DrawReportService.Consumers;
 using DrawReportService.DAL;
+using DrawReportService.HealthChecks;
+using DrawReportService.Infrastructure;
+using DrawReportService.Middleware;
 using DrawReportService.Options;
+using HealthChecks.UI.Client;
+using MassTransit;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// ==========================================
+// Serilog (early init)
+// ==========================================
+Log.Logger = new LoggerConfiguration()
+    .ReadFrom.Configuration(builder.Configuration)
+    .Enrich.FromLogContext()
+    .CreateLogger();
+
+builder.Host.UseSerilog();
 
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
     ?? new[]
@@ -56,9 +74,56 @@ builder.Services.AddSwaggerGen(options =>
 builder.Services.Configure<CassandraOptions>(builder.Configuration.GetSection("Cassandra"));
 builder.Services.AddSingleton<ICassandraSessionFactory, CassandraSessionFactory>();
 
+builder.Services.AddMassTransit(x =>
+{
+    x.SetKebabCaseEndpointNameFormatter();
+    x.AddConsumer<TicketPurchaseInitiatedConsumer>();
+
+    x.UsingRabbitMq((context, cfg) =>
+    {
+        var host = builder.Configuration["RabbitMq:Host"] ?? "rabbitmq";
+        var username = builder.Configuration["RabbitMq:Username"] ?? "guest";
+        var password = builder.Configuration["RabbitMq:Password"] ?? "guest";
+
+        cfg.Host(host, h =>
+        {
+            h.Username(username);
+            h.Password(password);
+        });
+
+        cfg.ConfigureEndpoints(context);
+    });
+});
+
 builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.AddScoped<IReportService, ReportService>();
 builder.Services.AddScoped<IDrawService, DrawService>();
+
+// CorrelationId propagation to outbound HTTP calls
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddTransient<CorrelationIdDelegatingHandler>();
+
+// Named HTTP client used by DrawService to update CatalogService winnerId after a draw
+builder.Services.AddHttpClient("catalog", client =>
+{
+    var baseUrl = builder.Configuration["Services:CatalogBaseUrl"] ?? "http://catalogservice:8080";
+    client.BaseAddress = new Uri(baseUrl);
+    client.DefaultRequestHeaders.Add("Accept", "application/json");
+}).AddHttpMessageHandler<CorrelationIdDelegatingHandler>();
+
+// ==========================================
+// Health Checks — Cassandra + RabbitMQ
+// ==========================================
+var rmqHost = builder.Configuration["RabbitMq:Host"] ?? "rabbitmq";
+var rmqUser = builder.Configuration["RabbitMq:Username"] ?? "guest";
+var rmqPass = builder.Configuration["RabbitMq:Password"] ?? "guest";
+
+builder.Services.AddHealthChecks()
+    .AddCheck<CassandraHealthCheck>("cassandra", tags: new[] { "db", "ready" })
+    .AddCheck(
+        "rabbitmq",
+        new RabbitMqHealthCheck(rmqHost, rmqUser, rmqPass),
+        tags: new[] { "broker", "ready" });
 
 var jwt = builder.Configuration.GetSection("Jwt");
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -93,11 +158,18 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseCors("DevelopmentCors");
+
+// Correlation ID before auth middleware
+app.UseMiddleware<CorrelationIdMiddleware>();
+
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", service = "DrawReportService" }))
-    .AllowAnonymous();
+// Deep health check endpoint
+app.MapHealthChecks("/health", new HealthCheckOptions
+{
+    ResponseWriter = UIResponseWriter.WriteHealthCheckUIResponse
+}).AllowAnonymous();
 
 app.MapControllers();
 

@@ -81,6 +81,10 @@ export class GiftList implements OnInit {
     });
   }
 
+  isGiftDrawn(gift: GiftModel): boolean {
+    return !!gift.winnerId || !!this.drawnWinners[gift.id];
+  }
+
   /** Load user cart and populate quantities */
   loadCart() {
     if (!this.authService.isLoggedIn()) return;
@@ -168,8 +172,8 @@ export class GiftList implements OnInit {
       this.giftSrv.drawWinner(giftId).subscribe({
         next: (res: any) => {
           // Store the winner immediately so the UI can show it
-          this.drawnWinners[giftId] = { name: res.name, email: res.email, emailSent: res.emailSent };
-          // Refresh the gift list to update winnerName from server
+          this.drawnWinners[giftId] = { name: res.winnerName, email: res.winnerEmail, emailSent: res.emailSent };
+          // Refresh the gift list to update winnerId from server
           this.giftSrv.refreshGifts();
         },
         error: (err: any) => alert(err.error?.message || 'שגיאה בהגרלה')

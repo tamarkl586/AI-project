@@ -7,8 +7,6 @@ services:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-root}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-rootpassword}
       MONGO_INITDB_DATABASE: ${CATALOG_DB_NAME:-catalogDb}
-    ports:
-      - "${MONGO_PORT:-27017}:27017"
     volumes:
       - mongodb_data:/data/db
     healthcheck:
@@ -33,7 +31,7 @@ services:
       POSTGRES_USER: ${IDENTITY_DB_USER:-postgres}
       POSTGRES_PASSWORD: ${IDENTITY_DB_PASSWORD:-postgres}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${IDENTITY_DB_HOST_PORT:-55432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -53,8 +51,6 @@ services:
       ACCEPT_EULA: "Y"
       MSSQL_SA_PASSWORD: "SecretPass123!#"
       MSSQL_PID: "Developer"
-    ports:
-      - "${SQLSERVER_PORT:-1433}:1433"
     volumes:
       - sqlserver_data:/var/opt/mssql
     healthcheck:
@@ -79,8 +75,6 @@ services:
       CASSANDRA_DC: ${CASSANDRA_DC:-datacenter1}
       MAX_HEAP_SIZE: 512M
       HEAP_NEWSIZE: 128M
-    ports:
-      - "${CASSANDRA_PORT:-9042}:9042"
     volumes:
       - cassandra_data:/var/lib/cassandra
     healthcheck:
@@ -92,23 +86,61 @@ services:
     networks:
       - microservices-net
 
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: message-broker
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - microservices-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: catalog-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - microservices-net
+
   catalogservice:
     build:
       context: ./server/CatalogService
       dockerfile: Dockerfile
-    container_name: catalog-service
     restart: unless-stopped
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:8080
+      Jwt__Key: ${JWT_KEY:?JWT_KEY is required}
       MongoDB_ConnectionString: mongodb://${MONGO_ROOT_USER:-root}:${MONGO_ROOT_PASSWORD:-rootpassword}@mongodb:27017/${CATALOG_DB_NAME:-catalogDb}?authSource=admin
       MongoDB_DatabaseName: ${CATALOG_DB_NAME:-catalogDb}
-      Redis_ConnectionString: ${CATALOG_REDIS_CONNECTION:-}
+      Redis_ConnectionString: ${CATALOG_REDIS_CONNECTION:-redis:6379}
     depends_on:
       mongodb:
         condition: service_healthy
-    ports:
-      - "${CATALOG_PORT:-8081}:8080"
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+    deploy:
+      replicas: 2
     networks:
       - microservices-net
 
@@ -121,12 +153,17 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:8080
+      Jwt__Key: ${JWT_KEY:?JWT_KEY is required}
       ConnectionStrings__DefaultConnection: Host=postgres;Port=5432;Database=${IDENTITY_DB_NAME:-identity_db};Username=${IDENTITY_DB_USER:-postgres};Password=${IDENTITY_DB_PASSWORD:-postgres}
     depends_on:
       postgres:
         condition: service_healthy
-    ports:
-      - "${IDENTITY_PORT:-8082}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     networks:
       - microservices-net
 
@@ -139,12 +176,23 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:8080
+      Jwt__Key: ${JWT_KEY:?JWT_KEY is required}
       ConnectionStrings__DefaultConnection: "Server=sqlserver,1433;Database=${TICKETING_DB_NAME:-ticketing_db};User Id=sa;Password=SecretPass123!#;TrustServerCertificate=True;"
+      Services__CatalogBaseUrl: http://catalogservice:8080
+      RabbitMq__Host: rabbitmq
+      RabbitMq__Username: ${RABBITMQ_USER:-guest}
+      RabbitMq__Password: ${RABBITMQ_PASSWORD:-guest}
     depends_on:
       sqlserver:
         condition: service_healthy
-    ports:
-      - "${TICKETING_PORT:-8083}:8080"
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8080/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
     networks:
       - microservices-net
 
@@ -157,15 +205,117 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:8080
+      Jwt__Key: ${JWT_KEY:?JWT_KEY is required}
+      Services__CatalogBaseUrl: http://catalogservice:8080
       Cassandra__ContactPoints__0: cassandra
       Cassandra__Port: "9042"
       Cassandra__Keyspace: ${CASSANDRA_KEYSPACE:-insights_db}
       Cassandra__Datacenter: ${CASSANDRA_DC:-datacenter1}
+      RabbitMq__Host: rabbitmq
+      RabbitMq__Username: ${RABBITMQ_USER:-guest}
+      RabbitMq__Password: ${RABBITMQ_PASSWORD:-guest}
     depends_on:
       cassandra:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8080/health || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    networks:
+      - microservices-net
+
+  webbff:
+    build:
+      context: ./server/WebBff
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      Jwt__Key: ${JWT_KEY:?JWT_KEY is required}
+      Services__TicketingBaseUrl: http://ticketingservice:8080
+      Services__CatalogBaseUrl: http://catalogservice:8080
+    depends_on:
+      ticketingservice:
+        condition: service_healthy
+      catalogservice:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - microservices-net
+
+  frontend:
+    build:
+      context: ./client/chineseSale
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/healthz | grep -q '^ok$'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - microservices-net
+
+  apigateway:
+    build:
+      context: ./server/ApiGateway
+      dockerfile: Dockerfile
+    container_name: api-gateway
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      Jwt__Key: ${JWT_KEY:?JWT_KEY is required}
+    depends_on:
+      identityservice:
+        condition: service_healthy
+      catalogservice:
+        condition: service_healthy
+      ticketingservice:
+        condition: service_healthy
+      drawreportservice:
+        condition: service_healthy
+      webbff:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
     ports:
-      - "${DRAWREPORT_PORT:-8084}:8080"
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - microservices-net
+
+  # ==========================================
+  # Centralized Logging: Seq
+  # UI available at http://localhost:5341 after docker compose up
+  # Services ship structured JSON logs to http://seq (port 80 inside the network)
+  # ==========================================
+  seq:
+    image: datalust/seq:latest
+    container_name: seq
+    restart: unless-stopped
+    environment:
+      ACCEPT_EULA: Y
+    ports:
+      - "5341:80"
+    volumes:
+      - seq_data:/data
     networks:
       - microservices-net
 
@@ -178,3 +328,4 @@ volumes:
   postgres_data:
   sqlserver_data:
   cassandra_data:
+  seq_data:

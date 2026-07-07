@@ -2,7 +2,6 @@ import { Component, OnInit } from '@angular/core';
 import { CommonModule, DatePipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ReportService } from '../../../services/Report/report-service';
-import { CartService } from '../../../services/Cart/cart-service';
 import { GiftWinnerReportModel } from '../../../models/Report/GiftWinnerReportModel';
 import { RevenueSummaryModel } from '../../../models/Report/RevenueSummaryModel';
 import { TopGiftStatsModel } from '../../../models/Cart/TopGiftStatsModel';
@@ -34,10 +33,7 @@ export class ReportsDashboard implements OnInit {
 
   loading = false;
 
-  constructor(
-    private reportService: ReportService,
-    private cartService: CartService
-  ) {}
+  constructor(private reportService: ReportService) {}
 
   ngOnInit(): void {
     this.loadRevenue();
@@ -71,7 +67,7 @@ export class ReportsDashboard implements OnInit {
 
   loadTopGift() {
     this.loading = true;
-    this.cartService.getTopGift(this.topGiftCriteria).subscribe({
+    this.reportService.getTopGift(this.topGiftCriteria).subscribe({
       next: (res) => { this.topGift = res; this.loading = false; },
       error: () => this.loading = false
     });
@@ -79,7 +75,7 @@ export class ReportsDashboard implements OnInit {
 
   loadPurchasers() {
     this.loading = true;
-    this.cartService.getAllPurchasers().subscribe({
+    this.reportService.getAllPurchasers().subscribe({
       next: (res) => { this.purchasers = res; this.loading = false; },
       error: () => this.loading = false
     });

@@ -11,7 +11,7 @@ import { environment } from '../../../environments/environment';
 })
 export class DonorService {
 
-  private baseUrl = `${environment.apiUrl}/Donor`;
+  private baseUrl = `${environment.apiUrl}/donor`;
 
   constructor(private http: HttpClient) { }
 

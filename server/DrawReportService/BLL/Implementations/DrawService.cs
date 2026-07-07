@@ -1,3 +1,4 @@
+using System.Net.Http.Json;
 using Cassandra;
 using DrawReportService.BLL.Interfaces;
 using DrawReportService.DAL;
@@ -12,17 +13,20 @@ public class DrawService : IDrawService
     private readonly Cassandra.ISession _session;
     private readonly CassandraOptions _options;
     private readonly IEmailService _emailService;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<DrawService> _logger;
 
     public DrawService(
         ICassandraSessionFactory sessionFactory,
         IOptions<CassandraOptions> options,
         IEmailService emailService,
+        IHttpClientFactory httpClientFactory,
         ILogger<DrawService> logger)
     {
         _session = sessionFactory.Session;
         _options = options.Value;
         _emailService = emailService;
+        _httpClientFactory = httpClientFactory;
         _logger = logger;
     }
 
@@ -42,16 +46,6 @@ public class DrawService : IDrawService
         var summaryRowSet = await _session.ExecuteAsync(new SimpleStatement(
             $"SELECT gift_name, picture, total_tickets FROM {_options.Keyspace}.gift_summary_by_gift WHERE gift_id = ?;",
             giftId));
-
-        var summaryRow = summaryRowSet.FirstOrDefault();
-        if (summaryRow == null)
-        {
-            throw new KeyNotFoundException("מתנה לא נמצאה");
-        }
-
-        var giftName = GetString(summaryRow, "gift_name");
-        var picture = GetString(summaryRow, "picture");
-        var totalTickets = summaryRow.IsNull("total_tickets") ? 0 : summaryRow.GetValue<int>("total_tickets");
 
         var purchaseRows = await _session.ExecuteAsync(new SimpleStatement(
             $"SELECT user_id, user_name, user_email, quantity FROM {_options.Keyspace}.gift_purchases_by_gift WHERE gift_id = ?;",
@@ -73,6 +67,13 @@ public class DrawService : IDrawService
             _logger.LogWarning("Draw aborted for Gift {GiftId}: No purchases found.", giftId);
             throw new InvalidOperationException("לא ניתן לבצע הגרלה - אין רכישות למתנה זו");
         }
+
+        var summaryRow = summaryRowSet.FirstOrDefault();
+        var giftName = summaryRow == null ? $"Gift {giftId}" : GetString(summaryRow, "gift_name");
+        var picture = summaryRow == null ? string.Empty : GetString(summaryRow, "picture");
+        var totalTickets = summaryRow == null
+            ? participants.Sum(p => p.Quantity)
+            : (summaryRow.IsNull("total_tickets") ? 0 : summaryRow.GetValue<int>("total_tickets"));
 
         var weightedPool = participants.SelectMany(p => Enumerable.Repeat(p, p.Quantity)).ToList();
         var winner = weightedPool[Random.Shared.Next(weightedPool.Count)];
@@ -116,6 +117,25 @@ public class DrawService : IDrawService
         await _session.ExecuteAsync(new SimpleStatement(
             $"UPDATE {_options.Keyspace}.gift_summary_by_gift SET winner_name = ? WHERE gift_id = ?;",
             winner.UserName, giftId));
+
+        // Update CatalogService MongoDB so GET /api/gift reflects the winner (best-effort)
+        try
+        {
+            var catalogClient = _httpClientFactory.CreateClient("catalog");
+            var patchResult = await catalogClient.PatchAsJsonAsync(
+                $"/api/gift/{giftId}/winner",
+                new { WinnerId = winner.UserId });
+            if (!patchResult.IsSuccessStatusCode)
+                _logger.LogWarning("CatalogService winner update returned {Status} for Gift {GiftId}",
+                    patchResult.StatusCode, giftId);
+            else
+                _logger.LogInformation("CatalogService winner updated for Gift {GiftId}", giftId);
+        }
+        catch (Exception ex)
+        {
+            // Non-fatal: draw result is already stored in Cassandra
+            _logger.LogWarning(ex, "Failed to update CatalogService winnerId for Gift {GiftId}. Draw still succeeded.", giftId);
+        }
 
         return new DrawingResultDTO
         {

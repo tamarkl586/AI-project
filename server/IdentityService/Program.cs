@@ -1,15 +1,29 @@
+using HealthChecks.UI.Client;
 using IdentityService.BLL.Implementations;
 using IdentityService.BLL.Interfaces;
 using IdentityService.DAL;
 using IdentityService.DAL.Implementations;
 using IdentityService.DAL.Interfaces;
+using IdentityService.Middleware;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using Serilog;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// ==========================================
+// Serilog (early init — captures startup errors)
+// ==========================================
+Log.Logger = new LoggerConfiguration()
+    .ReadFrom.Configuration(builder.Configuration)
+    .Enrich.FromLogContext()
+    .CreateLogger();
+
+builder.Host.UseSerilog();
 
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
     ?? new[]
@@ -61,6 +75,15 @@ builder.Services.AddDbContext<IdentityDbContext>(options =>
 builder.Services.AddScoped<IUserDAL, UserDAL>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 
+// ==========================================
+// Health Checks — deep PostgreSQL check
+// ==========================================
+builder.Services.AddHealthChecks()
+    .AddNpgSql(
+        connectionString: builder.Configuration.GetConnectionString("DefaultConnection")!,
+        name: "postgresql",
+        tags: new[] { "db", "ready" });
+
 var jwt = builder.Configuration.GetSection("Jwt");
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -81,6 +104,32 @@ builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<IdentityDbContext>();
+    var retries = 15;
+
+    while (retries > 0)
+    {
+        try
+        {
+            // This service currently has no EF migrations in source, so create schema directly.
+            db.Database.EnsureCreated();
+            break;
+        }
+        catch
+        {
+            retries--;
+            if (retries == 0)
+            {
+                throw;
+            }
+
+            Thread.Sleep(3000);
+        }
+    }
+}
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -89,11 +138,18 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 app.UseCors("DevelopmentCors");
+
+// Correlation ID must run before authentication so the ID is in the log context for auth failures too
+app.UseMiddleware<CorrelationIdMiddleware>();
+
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", service = "IdentityService" }))
-    .AllowAnonymous();
+// Deep health check endpoint (returns detailed JSON)
+app.MapHealthChecks("/health", new HealthCheckOptions
+{
+    ResponseWriter = UIResponseWriter.WriteHealthCheckUIResponse
+}).AllowAnonymous();
 
 app.MapControllers();
 
